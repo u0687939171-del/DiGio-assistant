@@ -4,70 +4,73 @@ import os
 import datetime
 
 # =======================================================
-# 1. CONFIGURAZIONE E SETUP DI STREAMLIT
+# 1. CONFIGURAZIONE CHIAVI API, URL e MAPPATURE
 # =======================================================
 
-# Imposta il titolo e l'icona della pagina
-st.set_page_config(page_title="DiGio Assistant", page_icon="🤖")
-
-# Nota IMPORTANTE su chiavi API: 
-# In un ambiente Streamlit Cloud, è BENE usare st.secrets o variabili d'ambiente.
-# Per test locali, inserisci qui le tue chiavi, ma rimuovile prima di pushare su GitHub!
-
+# Le chiavi sono lette da Streamlit Secrets/variabili d'ambiente (os.environ.get)
+# Sostituisci i placeholder con le tue chiavi per i test locali!
 GNEWS_API_KEY = os.environ.get("GNEWS_API_KEY", "99a7fe7cbfa85f9403d1639011dc457b")
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "f0f4286c0556d5918d9bd9883a779be0")
-TIMEZONEDB_API_KEY = os.environ.get("TIMEZONEDB_API_KEY", "J5DYFCVIP912")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY", "8deda8ae2a258a19620e4629e2c76116")
 
 # URL Base
 GNEWS_URL = "https://gnews.io/api/v4/search"
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
-TIMEZONEDB_URL = "http://api.timezonedb.com/v2.1/get-time-zone"
 OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather"
 
-# Configurazione per GNews (fonti specifiche)
-TARGET_SOURCES = [
-    "bbc-news", "new-york-times", "la-repubblica", "la-gazzetta-dello-sport", 
-    "ansa", "l-equipe", "mundo-deportivo"
-]
-SOURCES_LIST = ",".join(TARGET_SOURCES)
+# Mappatura dei nomi di Paese/nazionalità con i codici ISO (usati per GNews country e lang)
+COUNTRY_CODES = {
+    "italia": "it", "italiana": "it",
+    "stati uniti": "us", "usa": "us", "america": "us", 
+    "spagna": "es", "spagnola": "es",
+    "francia": "fr", "francese": "fr",
+    "germania": "de", "tedesca": "de",
+    "regno unito": "gb", "uk": "gb"
+    # Aggiungi altri paesi/nazionalità che desideri supportare...
+}
 
 
 # =======================================================
-# 2. FUNZIONI API
+# 2. FUNZIONI API (LOGICA DELLE RICHIESTE)
 # =======================================================
 
-def get_news_from_sources(query, max_articles=5):
-    """Recupera le notizie solo dalle fonti specificate."""
+def get_global_news(query, country_code, max_articles=5):
+    """
+    Recupera le notizie in base a una query e un codice Paese specifici.
+    Usa il filtro 'country' per ottenere notizie nella lingua originale del Paese.
+    """
     if GNEWS_API_KEY == "LA_TUA_CHIAVE_GNEWS":
         return "⚠️ Per le notizie, devi configurare la chiave GNews API!"
         
+    language_code = country_code.lower() 
+    
     params = {
         "q": query,
-        "lang": "it",  
-        "country": "it",
+        "lang": language_code, 
+        "country": country_code.upper(), 
         "max": max_articles, 
         "apikey": GNEWS_API_KEY,
-        "sources": SOURCES_LIST
     }
     
     try:
         response = requests.get(GNEWS_URL, params=params)
-        response.raise_for_status()
+        response.raise_for_status() 
         data = response.json()
         articles = data.get('articles', [])
         
         if not articles:
-            return f"😔 Oh no! Non ho trovato notizie nelle tue fonti preferite per: **{query}**"
+            return f"😔 Oh no! Non ho trovato notizie da **{country_code.upper()}** per: **{query if query else 'i titoli principali'}**"
 
         news_summary = []
         for a in articles:
-            news_summary.append(f"• **{a['title']}** (Fonte: {a['source']['name']})\n  [Dai un'occhiata qui!]({a['url']})")
+            news_summary.append(f"• **{a['title']}** (Fonte: {a['source']['name']})\n  [Leggi l'articolo originale]({a['url']})")
             
-        return f"📰 Certo! Ho trovato queste chicche nelle tue fonti preferite:\n\n" + "\n".join(news_summary)
+        return f"📰 Certo! Ho trovato queste chicche da **{country_code.upper()}**:\n\n" + "\n".join(news_summary)
         
     except requests.exceptions.RequestException as e:
         return f"🤯 Ops! Errore di connessione o API per le notizie: {e}"
+    except Exception as e:
+        return f"Si è verificato un errore inaspettato (Notizie): {e}"
 
 
 def get_movie_info(movie_title):
@@ -109,40 +112,8 @@ def get_movie_info(movie_title):
     
     except requests.exceptions.RequestException as e:
         return f"🤯 Ops! Errore di connessione o API per i film: {e}"
-
-
-def get_timezone_info(city_name):
-    """Ottiene l'ora e il fuso orario corrente per una città."""
-    if TIMEZONEDB_API_KEY == "LA_TUA_CHIAVE_TIMEZONEDB":
-        return "⚠️ Per il fuso orario, devi configurare la chiave TimezoneDB API!"
-
-    params = {
-        "key": TIMEZONEDB_API_KEY,
-        "format": "json",
-        "by": "city",
-        "city": city_name
-    }
-    
-    try:
-        response = requests.get(TIMEZONEDB_URL, params=params).json()
-        
-        if response.get('status') == 'FAILED' or response.get('message'):
-            return f"🌎 Non riesco a trovare il fuso orario per: **{city_name}**. Errore: {response.get('message', 'Dati non disponibili')}"
-
-        formatted_time = response['formatted']
-        time = formatted_time.split(' ')[1] 
-        timezone_name = response['zoneName']
-        gmt_offset = response['gmtOffset'] / 3600
-        
-        output = f"⏰ Ecco l'ora a **{city_name.title()}**:\n"
-        output += f"   - **Orario:** {time}\n"
-        output += f"   - **Fuso Orario:** {timezone_name}\n"
-        output += f"   - **Offset GMT:** GMT{'+' if gmt_offset >= 0 else ''}{gmt_offset:.0f}"
-        
-        return output
-
-    except requests.exceptions.RequestException as e:
-        return f"🤯 Ops! Errore di connessione o API per il fuso orario: {e}"
+    except Exception as e:
+        return f"Si è verificato un errore inaspettato (Film): {e}"
 
 
 def get_weather_info(city_name):
@@ -186,6 +157,7 @@ def get_weather_info(city_name):
 # =======================================================
 
 def main():
+    st.set_page_config(page_title="DiGio Assistant", page_icon="🤖")
     st.title("🤖 DiGio: Il tuo Assistente Interattivo")
     st.markdown("Ciao! Sono **DiGio**, il tuo assistente personale. Dimmi cosa posso fare per te!")
     
@@ -194,44 +166,63 @@ def main():
         st.markdown("""
         Prova uno di questi comandi:
         
-        - **notizie** *<argomento>*: Es. `notizie calcio`
-        - **film** *<titolo>*: Es. `film The Martian`
-        - **fuso** *<città>*: Es. `fuso orario tokyo`
-        - **meteo** *<città>*: Es. `meteo Palermo`
+        - **notizie** *[Paese] [argomento]*: Cerca notizie globali. Es. `notizie Spagna calcio` o `notizie USA`.
+        - **film** *<titolo>*: Cerca informazioni su un film. Es. `film Interstellar`
+        - **meteo** *<città>*: Ottiene le condizioni meteo attuali. Es. `meteo Palermo`
         """)
 
     # Input testuale per l'utente
     user_input = st.text_input("💬 Cosa vuoi chiedermi oggi?", key="user_query")
 
     if user_input:
-        # Pulisci e normalizza l'input
         user_query = user_input.lower().strip()
-        
-        # Placeholder per il risultato
         result = ""
         
         # --- Logica di Parsing ---
         try:
+            # --- Logica NOTIZIE (GNews Globali) ---
             if user_query.startswith("notizie"):
-                query = user_query.split(" ", 1)[1].strip()
-                result = get_news_from_sources(query)
                 
+                parts = user_query.split(" ", 1)
+                if len(parts) < 2:
+                    st.warning("Ehi! Devi specificare almeno un argomento o un Paese. Es: 'notizie sport' o 'notizie spagna'.")
+                    return
+
+                search_query = parts[1].strip()
+                country_code = "it" 
+                topic_query = search_query 
+                
+                # Cerca il nome del Paese nella query
+                words = search_query.split()
+                for word in words:
+                    if word in COUNTRY_CODES:
+                        country_code = COUNTRY_CODES[word]
+                        # Rimuovi il nome del Paese dalla query
+                        topic_query = search_query.replace(word, "").strip()
+                        break
+                        
+                final_query = topic_query if topic_query else ""
+
+                st.info(f"🤖 DiGio: Cerco notizie da **{country_code.upper()}** su: *{final_query if final_query else 'i titoli principali'}*...")
+                result = get_global_news(final_query, country_code)
+                
+            # --- Logica FILM (TMDB) ---
             elif user_query.startswith("film"):
                 movie_title = user_query.split(" ", 1)[1].strip()
+                st.info(f"🤖 DiGio: Cerco dettagli su '{movie_title}'...")
                 result = get_movie_info(movie_title)
                 
-            elif user_query.startswith("fuso"):
-                city_name = user_query.split(" ", 1)[1].strip()
-                result = get_timezone_info(city_name)
-
+            # --- Logica METEO (OpenWeatherMap) ---
             elif user_query.startswith("meteo"):
                 city_name = user_query.split(" ", 1)[1].strip()
+                st.info(f"🤖 DiGio: Cerco il meteo per '{city_name}'...")
                 result = get_weather_info(city_name)
-                
+            
+            # --- Logica NON RICONOSCIUTA ---
             else:
-                result = "🤔 Non ho capito bene... puoi ripetere il comando? Ricorda di usare `notizie`, `film`, `fuso` o `meteo`!"
+                result = "🤔 Non ho capito bene... puoi ripetere il comando? Ricorda di usare `notizie`, `film`, o `meteo`!"
 
-            # Mostra il risultato usando st.markdown (per interpretare il grassetto e gli emoji)
+            # Mostra il risultato
             st.markdown("---")
             st.markdown(f"**🤖 DiGio risponde:**")
             st.markdown(result)
